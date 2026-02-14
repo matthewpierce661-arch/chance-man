@@ -81,6 +81,16 @@ public class ChanceManPlugin extends Plugin
     private static final int GE_SEARCH_BUILD_SCRIPT = 751;
     private volatile boolean tradeableItemsInitialized = false;
     private boolean featuresActive = false;
+        private final Map<Skill, Integer> lastLevels = new EnumMap<>(Skill.class);
+private void initializeLevels()
+{
+    lastLevels.clear();
+
+    for (Skill skill : Skill.values())
+    {
+        lastLevels.put(skill, client.getRealSkillLevel(skill));
+    }
+}
 
     @Provides
     ChanceManConfig provideConfig(ConfigManager configManager)
@@ -346,16 +356,45 @@ public class ChanceManPlugin extends Plugin
     public void onGameTick(GameTick event)
     {
         if (!featuresActive) return;
-        if (!tradeableItemsInitialized && client.getGameState() == GameState.LOGGED_IN)
-        {
-            refreshTradeableItems();
-        }
+       if (!tradeableItemsInitialized && client.getGameState() == GameState.LOGGED_IN)
+{
+    refreshTradeableItems();
+    initializeLevels();
+}
 
         if (tradeableItemsInitialized)
         {
             rollAnimationManager.process();
         }
     }
+        @Subscribe
+public void onStatChanged(StatChanged event)
+{
+    if (!canProcessItemEvents())
+    {
+        return;
+    }
+
+    Skill skill = event.getSkill();
+    int newLevel = event.getLevel();
+
+    Integer oldLevel = lastLevels.get(skill);
+
+    // First-time init safety
+    if (oldLevel == null)
+    {
+        lastLevels.put(skill, newLevel);
+        return;
+    }
+
+    // Level-up detected
+    if (newLevel > oldLevel)
+    {
+        triggerLevelUpRoll(skill, newLevel);
+    }
+
+    lastLevels.put(skill, newLevel);
+}
 
     @Subscribe
     public void onScriptPostFired(ScriptPostFired event)
@@ -492,4 +531,41 @@ public class ChanceManPlugin extends Plugin
     {
         return allTradeableItems.contains(itemId);
     }
+}
+private void triggerLevelUpRoll(Skill skill, int level)
+{
+    // Find all unrolled, unobtained tradeable items
+    List<Integer> available = new ArrayList<>();
+
+    for (int itemId : allTradeableItems)
+    {
+        if (!rolledItemsManager.isRolled(itemId)
+                && !obtainedItemsManager.isObtained(itemId))
+        {
+            available.add(itemId);
+        }
+    }
+
+    if (available.isEmpty())
+    {
+        return;
+    }
+
+    // Pick random item
+    int rolledItem = available.get(
+            new Random().nextInt(available.size())
+    );
+
+    rolledItemsManager.markRolled(rolledItem);
+    rollAnimationManager.enqueueRoll(rolledItem);
+
+    // Optional: Chat message
+    client.addChatMessage(
+            ChatMessageType.GAMEMESSAGE,
+            "",
+            "ChanceMan: Level up! Rolled a new item.",
+            null
+    );
+
+    refreshDropsViewerIfOpen();
 }
